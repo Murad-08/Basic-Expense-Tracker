@@ -1,0 +1,43 @@
+static int current_id = 0;
+
+void clear_screen();
+void pause_prompt();
+void print_header(const char *title);
+int  get_password(char *buf, size_t size);
+
+
+int register_user();
+int login_user(char *out_username);
+int user_exists(const char *username);
+int check_credentials(const char *username, const char *password);
+
+
+int add_expense(const char *username);
+int view_expenses_by_date(const char *username);
+int edit_expense(const char *username);
+int delete_expense(const char *username);
+int monthly_summary(const char *username);
+int yearly_summary(const char *username);
+int next_expense_id();
+void init_current_id();
+
+
+void trim_newline(char *s);
+int parse_date(const char *s, int *d, int *m, int *y);
+int confirm_prompt(const char *msg);
+
+int main() {
+    char username[MAXUSER] = {0};
+    int choice;
+
+    init_current_id();
+
+    while (1) {
+        clear_screen();
+        print_header("CLI Basic Expense Tracker");
+        printf("%s1.%s Login\n", CYAN, RESET);
+        printf("%s2.%s Register\n", CYAN, RESET);
+        printf("%s3.%s Exit\n", CYAN, RESET);
+        printf("\nChoose: ");
+        if (scanf("%d", &choice) != 1) { fflush(stdin); choice = 0; }
+        while (getchar() != '\n');
