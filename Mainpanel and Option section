@@ -1,0 +1,43 @@
+        if (choice == 1) {
+            if (login_user(username)) {
+                int opt = 0;
+                while (opt != 9) {
+                    clear_screen();
+                    print_header("Main Panel");
+                    printf("Logged in as: %s%s%s\n\n", GREEN, username, RESET);
+                    printf("%s1.%s Add Expense\n", YELLOW, RESET);
+                    printf("%s2.%s View Expenses (by date)\n", YELLOW, RESET);
+                    printf("%s3.%s Edit Expense\n", YELLOW, RESET);
+                    printf("%s4.%s Delete Expense\n", YELLOW, RESET);
+                    printf("%s5.%s Monthly Summary\n", YELLOW, RESET);
+                    printf("%s6.%s Yearly Summary\n", YELLOW, RESET);
+                    printf("%s7.%s Logout\n", YELLOW, RESET);
+                    printf("%s8.%s Exit\n", YELLOW, RESET);
+                    printf("\nChoose: ");
+                    if (scanf("%d", &opt) != 1) { fflush(stdin); opt = 0; }
+                    while (getchar() != '\n');
+
+                    switch (opt) {
+                        case 1: add_expense(username); break;
+                        case 2: view_expenses_by_date(username); break;
+                        case 3: edit_expense(username); break;
+                        case 4: delete_expense(username); break;
+                        case 5: monthly_summary(username); break;
+                        case 6: yearly_summary(username); break;
+                        case 7: opt = 9; break; // logout
+                        case 8: printf("Goodbye!\n"); exit(0);
+                        default: printf("Invalid option\n"); pause_prompt();
+                    }
+                }
+            }
+        } else if (choice == 2) {
+            register_user();
+        } else if (choice == 3) {
+            printf("Bye!\n");
+            break;
+        } else {
+            printf("Invalid choice\n"); pause_prompt();
+        }
+    }
+    return 0;
+}
