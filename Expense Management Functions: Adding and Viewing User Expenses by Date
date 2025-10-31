@@ -1,0 +1,90 @@
+void init_current_id()
+ {
+    FILE *f = fopen(EXP_FILE, "rb");
+    if (!f) { current_id = 0; return; 
+}
+    Expense e; int maxid = 0;
+    while (fread(&e, sizeof(Expense), 1, f) == 1)
+        if (e.id > maxid) maxid = e.id;
+    fclose(f);
+    current_id = maxid;
+}
+int next_expense_id() 
+{
+ return ++current_id;
+ }
+int add_expense(const char *username)
+ {
+    Expense e;
+    clear_screen(); print_header("Add Expense");
+    e.id = next_expense_id();
+    strncpy(e.username, username, MAXUSER);
+    char datebuf[32];
+    printf("Enter date (dd-mm-yyyy): ");
+    fgets(datebuf, sizeof(datebuf), stdin);
+    trim_newline(datebuf);
+    if (!parse_date(datebuf, &e.day, &e.month, &e.year))
+   {
+        printf("%sInvalid date format.%s\n", RED, RESET);
+        pause_prompt(); return 0;
+    }
+    printf("Category: "); 
+    fgets(e.category, sizeof(e.category), stdin);
+    trim_newline(e.category);
+    printf("Amount: ");
+    if (scanf("%lf", &e.amount) != 1) 
+   {
+        while(getchar()!='\n');
+        printf("%sInvalid amount.%s\n", RED, RESET);
+        pause_prompt(); return 0;
+    }
+    while (getchar() != '\n');
+
+    FILE *f = fopen(EXP_FILE, "ab");
+    if (!f) 
+   { 
+   perror("Cannot open expenses file");
+    pause_prompt(); return 0; 
+   }
+    fwrite(&e, sizeof(Expense), 1, f); 
+    fclose(f);
+    printf("%sExpense added successfully (ID %04d).%s\n", GREEN, e.id, RESET);
+    pause_prompt();
+    return 1;
+   }
+
+    int view_expenses_by_date(const char *username)
+    {
+    char datebuf[32]; int d,m,y;
+    clear_screen(); print_header("View Expenses");
+    printf("Enter date (dd-mm-yyyy): ");
+    fgets(datebuf, sizeof(datebuf), stdin); 
+    trim_newline(datebuf);
+    if (!parse_date(datebuf, &d,&m,&y))  
+   {
+        printf("%sInvalid date.%s\n", RED, RESET);
+        pause_prompt();  
+   return 0;
+    }
+    FILE *f = fopen(EXP_FILE, "rb");
+    if (!f) 
+   { 
+    printf("%sNo expenses found.%s\n", YELLOW, RESET); 
+    pause_prompt(); 
+    return 0; 
+     }
+    Expense e;  
+    int found=0;
+    printf("\n%sExpenses on %02d-%02d-%04d%s\n", BLUE, d,m,y, RESET);
+    printf("-------------------------------------------\n");
+    while (fread(&e, sizeof(Expense), 1, f) == 1)
+        if (strcmp(e.username, username)==0 && e.day==d && e.month==m && e.year==y) 
+    {
+            printf("ID:%02d | %s | %.2f\n", e.id, e.category, e.amount);
+            found=1;
+        }
+    fclose(f);
+    if (!found)
+        printf("%sNo records found for that date.%s\n", YELLOW, RESET);
+    pause_prompt(); return found;
+}
