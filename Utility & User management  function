@@ -1,0 +1,135 @@
+// ----------------------- UTILITIES -----------------------
+void clear_screen() {
+#ifdef _WIN32
+    system("cls");
+#else
+    system("clear");
+#endif
+}
+
+void pause_prompt() {
+    printf("\n%sPress Enter to continue...%s", CYAN, RESET);
+    while (getchar() != '\n');
+}
+
+void print_header(const char *title) {
+    printf("%s========================================%s\n", MAGENTA, RESET);
+    printf("%s  %s%s\n", MAGENTA, title, RESET);
+    printf("%s========================================%s\n\n", MAGENTA, RESET);
+}
+
+int get_password(char *buf, size_t size) {
+#ifdef _WIN32
+    int i = 0; char c;
+    while ((c = _getch()) != '\r' && i < (int)size - 1) {
+        if (c == '\b' && i > 0) { i--; printf("\b \b"); }
+        else if (c >= 32) { buf[i++] = c; printf("*"); }
+    }
+    buf[i] = '\0';
+    printf("\n");
+#else
+    struct termios oldt, newt;
+    tcgetattr(STDIN_FILENO, &oldt);
+    newt = oldt;
+    newt.c_lflag &= ~(ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+    fgets(buf, size, stdin);
+    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+    trim_newline(buf);
+    printf("\n");
+#endif
+    return 1;
+}
+
+void trim_newline(char *s) {
+    if (!s) return;
+    size_t n = strlen(s);
+    if (n && s[n - 1] == '\n') s[n - 1] = '\0';
+}
+
+int confirm_prompt(const char *msg) {
+    char c;
+    printf("%s%s (y/n): %s", YELLOW, msg, RESET);
+    c = getchar();
+    while (getchar() != '\n');
+    return (c == 'y' || c == 'Y');
+}
+
+int parse_date(const char *s, int *d, int *m, int *y) {
+    int a, b, c;
+    if (sscanf(s, "%d-%d-%d", &a, &b, &c) == 3) {
+        if (a > 31) { *y = a; *m = b; *d = c; }
+        else { *d = a; *m = b; *y = c; }
+        return 1;
+    }
+    if (sscanf(s, "%d/%d/%d", &a, &b, &c) == 3) { *d = a; *m = b; *y = c; return 1; }
+    return 0;
+}
+
+// ----------------------- USER -----------------------
+int user_exists(const char *username) {
+    FILE *f = fopen(USERS_FILE, "rb");
+    if (!f) return 0;
+    User u;
+    while (fread(&u, sizeof(User), 1, f) == 1)
+        if (strcmp(u.username, username) == 0) { fclose(f); return 1; }
+    fclose(f);
+    return 0;
+}
+
+int register_user() {
+    User u;
+    clear_screen(); print_header("Register");
+    printf("Enter username: ");
+    fgets(u.username, sizeof(u.username), stdin); trim_newline(u.username);
+    if (strlen(u.username) == 0) {
+        printf("%sUsername cannot be empty.%s\n", RED, RESET);
+        pause_prompt(); return 0;
+    }
+    if (user_exists(u.username)) {
+        printf("%sUser already exists.%s\n", RED, RESET);
+        pause_prompt(); return 0;
+    }
+    printf("Enter password: ");
+    get_password(u.password, sizeof(u.password));
+    if (strlen(u.password) < 3) {
+        printf("%sPassword too short.%s\n", RED, RESET);
+        pause_prompt(); return 0;
+    }
+    FILE *f = fopen(USERS_FILE, "ab");
+    if (!f) {
+        perror("Cannot open users file");
+        pause_prompt(); return 0;
+    }
+    fwrite(&u, sizeof(User), 1, f); fclose(f);
+    printf("%sRegistration complete!%s\n", GREEN, RESET);
+    pause_prompt();
+    return 1;
+}
+
+int check_credentials(const char *username, const char *password) {
+    FILE *f = fopen(USERS_FILE, "rb");
+    if (!f) return 0;
+    User u;
+    while (fread(&u, sizeof(User), 1, f) == 1)
+        if (strcmp(u.username, username) == 0 && strcmp(u.password, password) == 0) {
+            fclose(f); return 1;
+        }
+    fclose(f);
+    return 0;
+}
+
+int login_user(char *out_username) {
+    char uname[MAXUSER], pass[MAXPASS];
+    clear_screen(); print_header("Login");
+    printf("Username: "); fgets(uname, sizeof(uname), stdin); trim_newline(uname);
+    printf("Password: "); get_password(pass, sizeof(pass));
+    if (check_credentials(uname, pass)) {
+        strcpy(out_username, uname);
+        printf("%sLogin successful!%s\n", GREEN, RESET);
+        pause_prompt(); return 1;
+    } else {
+        printf("%sInvalid username or password.%s\n", RED, RESET);
+        pause_prompt(); return 0;
+    }
+}
