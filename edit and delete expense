@@ -1,0 +1,52 @@
+int edit_expense(const char *username) {
+    int id;
+    clear_screen(); print_header("Edit Expense");
+    printf("Enter Expense ID to edit: ");
+    if (scanf("%d", &id)!=1) { while(getchar()!='\n'); printf("%sInvalid ID.%s\n", RED, RESET); pause_prompt(); return 0; }
+    while(getchar()!='\n');
+
+    FILE *f = fopen(EXP_FILE, "rb+");
+    if (!f) { printf("%sNo expenses file found.%s\n", RED, RESET); pause_prompt(); return 0; }
+
+    Expense e; long pos; int found=0;
+    while (fread(&e, sizeof(Expense), 1, f) == 1) {
+        if (e.id==id && strcmp(e.username, username)==0) {
+            found=1; pos = ftell(f)-sizeof(Expense);
+            printf("Found: %s - %.2f\n", e.category, e.amount);
+            if (!confirm_prompt("Edit this record?")) { fclose(f); pause_prompt(); return 0; }
+
+            char buf[128];
+            printf("New category (blank to keep): "); fgets(buf,sizeof(buf),stdin); trim_newline(buf);
+            if(strlen(buf)>0) strncpy(e.category,buf,MAXCAT);
+            printf("New amount (0 to keep): "); double a;
+            if(scanf("%lf",&a)==1 && a>0) e.amount=a; while(getchar()!='\n');
+            fseek(f,pos,SEEK_SET); fwrite(&e,sizeof(Expense),1,f);
+            printf("%sExpense updated successfully.%s\n", GREEN, RESET);
+            fclose(f); pause_prompt(); return 1;
+        }
+    }
+    fclose(f);
+    printf("%sRecord not found or not yours.%s\n", RED, RESET);
+    pause_prompt(); return 0;
+}
+
+int delete_expense(const char *username) {
+    int id;
+    clear_screen(); print_header("Delete Expense");
+    printf("Enter Expense ID to delete: ");
+    if(scanf("%d",&id)!=1){while(getchar()!='\n'); printf("%sInvalid ID.%s\n", RED, RESET); pause_prompt(); return 0;}
+    while(getchar()!='\n');
+    FILE *f=fopen(EXP_FILE,"rb"); if(!f){printf("%sNo expenses file.%s\n", RED, RESET); pause_prompt(); return 0;}
+    FILE *tmp=fopen("tmp.dat","wb"); Expense e; int found=0;
+    while(fread(&e,sizeof(Expense),1,f)==1){
+        if(e.id==id && strcmp(e.username,username)==0){
+            found=1; if(!confirm_prompt("Are you sure delete?")){fclose(f); fclose(tmp); remove("tmp.dat"); pause_prompt(); return 0;}
+            continue;
+        }
+        fwrite(&e,sizeof(Expense),1,tmp);
+    }
+    fclose(f); fclose(tmp);
+    if(found){ remove(EXP_FILE); rename("tmp.dat",EXP_FILE); printf("%sDeleted successfully.%s\n", GREEN, RESET);}
+    else { remove("tmp.dat"); printf("%sNot found or not yours.%s\n", RED, RESET); }
+    pause_prompt(); return found;
+}
