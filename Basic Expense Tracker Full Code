@@ -1,0 +1,620 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <ctype.h>
+#ifdef _WIN32
+#include <conio.h>
+#else
+#include <termios.h>
+#include <unistd.h>
+#endif
+#define USERS_FILE "users.dat"
+#define EXP_FILE   "expenses.dat"
+#define MAXUSER    32
+#define MAXPASS    32
+#define MAXCAT     32
+#define RESET   "\x1b[0m"
+#define RED     "\x1b[31m"
+#define GREEN   "\x1b[32m"
+#define YELLOW  "\x1b[33m"
+#define BLUE    "\x1b[34m"
+#define MAGENTA "\x1b[35m"
+#define CYAN    "\x1b[36m"
+#define BOLD    "\x1b[1m"
+
+typedef struct {
+    char username[MAXUSER];
+    char password[MAXPASS];
+} User;
+typedef struct {
+    int id;
+    char username[MAXUSER];
+    int day, month, year;
+    char category[MAXCAT];
+    double amount;
+} Expense;
+static int current_id = 0;
+void clear_screen(void);
+void pause_prompt(void);
+void print_header(const char *title);
+int  get_password(char *buf, size_t size);
+void trim_newline(char *s);
+int  confirm_prompt(const char *msg);
+int  parse_date(const char *s, int *d, int *m, int *y);
+int  parse_month_year(const char *s, int *m, int *y);
+int  user_exists(const char *username);
+int  register_user(void);
+int  check_credentials(const char *username, const char *password);
+int  login_user(char *out_username);
+void init_current_id(void);
+int  next_expense_id(void);
+int  get_next_expense_id(const char *username);
+int  add_expense(const char *username);
+int  view_expenses_by_date(const char *username);
+int  edit_expense(const char *username);
+int  delete_expense(const char *username);
+int  monthly_summary(const char *username);
+int  yearly_summary(const char *username);
+void clear_screen(void) {
+#ifdef _WIN32
+    system("cls");
+#else
+    system("clear");
+#endif
+}
+void pause_prompt(void) {
+    printf("\n%sPress Enter to continue...%s", CYAN, RESET);
+    while (getchar() != '\n');
+}
+void print_header(const char *title) {
+    printf("%s========================================%s\n", MAGENTA, RESET);
+    printf("%s|    %-34s|\n", MAGENTA, title, RESET);
+    printf("%s========================================%s\n\n", MAGENTA, RESET);
+}
+void trim_newline(char *s) {
+    if (!s) return;
+    size_t n = strlen(s);
+    if (n && s[n - 1] == '\n') s[n - 1] = '\0';
+}
+int confirm_prompt(const char *msg) {
+    char c;
+    printf("%s%s (y/n): %s", YELLOW, msg, RESET);
+    c = getchar();
+    while (getchar() != '\n');
+    return (c == 'y' || c == 'Y');
+}
+int get_password(char *buf, size_t size) {
+#ifdef _WIN32
+    int i = 0;
+    char c;
+    while ((c = _getch()) != '\r' && i < (int)size - 1) {
+        if (c == '\b' && i > 0) { i--; printf("\b \b"); }
+        else if (c >= 32) { buf[i++] = c; printf("*"); }
+    }
+    buf[i] = '\0';
+    printf("\n");
+#else
+    struct termios oldt, newt;
+    if (tcgetattr(STDIN_FILENO, &oldt) != 0) {
+        // Fallback to fgets if termios not available
+        if (!fgets(buf, size, stdin)) return 0;
+        trim_newline(buf);
+        return 1;
+    }
+    newt = oldt;
+    newt.c_lflag &= ~(ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+    if (!fgets(buf, size, stdin)) {
+        tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+        return 0;
+    }
+    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+    trim_newline(buf);
+    printf("\n");
+#endif
+    return 1;
+}
+int parse_date(const char *s, int *d, int *m, int *y) {
+    if (!s) return 0;
+    if (sscanf(s, "%d-%d-%d", d, m, y) == 3) return 1;
+    if (sscanf(s, "%d/%d/%d", d, m, y) == 3) return 1;
+    return 0;
+}
+int parse_month_year(const char *s, int *m, int *y) {
+    if (!s) return 0;
+    if (sscanf(s, "%d-%d", m, y) == 2) return 1;
+    if (sscanf(s, "%d/%d", m, y) == 2) return 1;
+    return 0;
+}
+int user_exists(const char *username) {
+    FILE *f = fopen(USERS_FILE, "r");
+    if (!f) return 0;
+    User u;
+    while (fscanf(f, "%31s %31s", u.username, u.password) == 2) {
+        if (strcmp(u.username, username) == 0) { fclose(f); return 1; }
+    }
+    fclose(f);
+    return 0;
+}
+
+int register_user(void) {
+    User u;
+    clear_screen();
+    print_header("Register");
+    printf("%sEnter username:%s ", YELLOW, RESET);
+    if (!fgets(u.username, sizeof(u.username), stdin)) return 0;
+    trim_newline(u.username);
+    if (strlen(u.username) == 0) {
+        printf("%sUsername cannot be empty!%s\n", RED, RESET);
+        pause_prompt();
+        return 0;
+    }
+    if (user_exists(u.username)) {
+        printf("%sUser already exists!%s\n", RED, RESET);
+        pause_prompt();
+        return 0;
+    }
+    printf("%sEnter password:%s ", YELLOW, RESET);
+    get_password(u.password, sizeof(u.password));
+
+    if (strlen(u.password) < 8) {
+        printf("%sPassword too short!%s\n", RED, RESET);
+        pause_prompt();
+        return 0;
+    }
+
+    FILE *f = fopen(USERS_FILE, "a");
+    if (!f) { perror("Cannot open users file"); pause_prompt(); return 0; }
+    fprintf(f, "%s %s\n", u.username, u.password);
+    fclose(f);
+    printf("%sRegistration completed successfully!%s\n", GREEN, RESET);
+    pause_prompt();
+    return 1;
+}
+int check_credentials(const char *username, const char *password) {
+    FILE *f = fopen(USERS_FILE, "r");
+    if (!f) return 0;
+    User u;
+    while (fscanf(f, "%31s %31s", u.username, u.password) == 2) {
+        if (strcmp(u.username, username) == 0 && strcmp(u.password, password) == 0) {
+            fclose(f);
+            return 1;
+        }
+    }
+    fclose(f);
+    return 0;
+}
+int login_user(char *out_username) {
+    char uname[MAXUSER], pass[MAXPASS];
+    int attempts = 3;
+    while (attempts--) {
+        clear_screen();
+        print_header("Login");
+        printf("%sUsername:%s ", YELLOW, RESET);
+        if (!fgets(uname, sizeof(uname), stdin)) return 0;
+        trim_newline(uname);
+        printf("%sPassword:%s ", YELLOW, RESET);
+        get_password(pass, sizeof(pass));
+        if (check_credentials(uname, pass)) {
+            strcpy(out_username, uname);
+            printf("%sLogin successful!%s\n", GREEN, RESET);
+            pause_prompt();
+            return 1;
+        } else {
+            printf("%sInvalid username or password!%s\n", RED, RESET);
+            if (attempts > 0)
+                printf("%sTry again (%d attempts left).%s\n", YELLOW, attempts, RESET);
+            pause_prompt();
+        }
+    }
+    printf("%sToo many failed attempts. Returning to UI.%s\n", RED, RESET);
+    pause_prompt();
+    return 0;
+}
+void init_current_id(void) {
+    FILE *f = fopen(EXP_FILE, "r");
+    if (!f) { current_id = 0; return; }
+    Expense e;
+    int maxid = 0;
+    while (fscanf(f, "%d %31s %d %d %d %31s %lf",
+                  &e.id, e.username, &e.day, &e.month, &e.year,
+                  e.category, &e.amount) == 7) {
+        if (e.id > maxid) maxid = e.id;
+    }
+    fclose(f);
+    current_id = maxid;
+}
+int next_expense_id(void) {
+    return ++current_id;
+}
+
+int get_next_expense_id(const char *username) {
+    FILE *f = fopen(EXP_FILE, "r");
+    if (!f) return 1;
+    Expense e;
+    int maxid = 0;
+    while (fscanf(f, "%d %31s %d %d %d %31s %lf",
+                  &e.id, e.username, &e.day, &e.month, &e.year,
+                  e.category, &e.amount) == 7) {
+        if (strcmp(e.username, username) == 0 && e.id > maxid)
+            maxid = e.id;
+    }
+    fclose(f);
+    return maxid + 1;
+}
+int add_expense(const char *username) {
+    char choice = 'y';
+    int first = 1;
+    while (choice == 'y' || choice == 'Y') {
+        Expense e;
+        if (first) {
+            clear_screen();
+            print_header("Add Expense");
+            first = 0;
+        }
+        e.id = get_next_expense_id(username);
+        strncpy(e.username, username, MAXUSER);
+        printf("\n%s--------------------------------------------------%s\n", YELLOW, RESET);
+        char datebuf[32];
+        printf("Enter date (dd-mm-yyyy): ");
+        if (!fgets(datebuf, sizeof(datebuf), stdin)) {
+            printf("%sInvalid input!%s\n", RED, RESET);
+            pause_prompt();
+            return 0;
+        }
+        trim_newline(datebuf);
+        if (!parse_date(datebuf, &e.day, &e.month, &e.year)) {
+            printf("%sInvalid date format!%s\n", RED, RESET);
+            pause_prompt();
+            return 0;
+        }
+        if (e.month < 1 || e.month > 12) {
+            printf("%sInvalid month! Must be 1-12.%s\n", RED, RESET);
+            pause_prompt();
+            return 0;
+        }
+        if (e.day < 1 || e.day > 31) {
+            printf("%sInvalid day! Must be 1-31.%s\n", RED, RESET);
+            pause_prompt();
+            return 0;
+        }
+        time_t t = time(NULL);
+        struct tm *now = localtime(&t);
+        if (e.year > (now->tm_year + 1900)) {
+            printf("%sInvalid! Future year not allowed.%s\n", RED, RESET);
+            pause_prompt();
+            return 0;
+        }
+
+        printf("Category: ");
+        if (!fgets(e.category, sizeof(e.category), stdin)) {
+            printf("%sInvalid input!%s\n", RED, RESET);
+            pause_prompt();
+            return 0;
+        }
+        trim_newline(e.category);
+        printf("Amount: ");
+        if (scanf("%lf", &e.amount) != 1) {
+            while (getchar() != '\n');
+            printf("%sInvalid amount!%s\n", RED, RESET);
+            pause_prompt();
+            return 0;
+        }
+        while (getchar() != '\n');
+        FILE *f = fopen(EXP_FILE, "a");
+        if (!f) {
+            perror("Cannot open expenses file");
+            pause_prompt();
+            return 0;
+        }
+        fprintf(f, "%d %s %d %d %d %s %.2f\n",
+                e.id, e.username, e.day, e.month, e.year, e.category, e.amount);
+        fclose(f);
+        printf("%sExpense added successfully! (ID %04d)%s\n", GREEN, e.id, RESET);
+        int invalid_attempts = 0;
+        while (1) {
+            printf("\nAdd another expense? (y/n): ");
+            choice = getchar();
+            while (getchar() != '\n');
+            if (choice == 'y' || choice == 'Y' || choice == 'n' || choice == 'N')
+                break;
+            invalid_attempts++;
+            printf("%sInvalid input! Please enter 'y' or 'n'.%s\n", RED, RESET);
+            if (invalid_attempts >= 3) {
+               printf("%sToo many invalid attempts!%s %sSaving and exiting...%s\n",
+           RED, RESET, GREEN, RESET);
+                choice = 'n'; 
+                break;
+            }
+        }
+    }
+
+    printf("\n%sAll expenses saved successfully!%s\n", GREEN, RESET);
+    pause_prompt();
+    return 1;
+}
+int view_expenses_by_date(const char *username) {
+    char datebuf[32];
+    int d, m, y;
+    clear_screen();
+    print_header("  View Expenses ");
+    printf("Enter date (dd-mm-yyyy): ");
+    if (!fgets(datebuf, sizeof(datebuf), stdin)) { printf("%sInvalid input!%s\n", RED, RESET); pause_prompt(); return 0; }
+    trim_newline(datebuf);
+    if (!parse_date(datebuf, &d, &m, &y)) {
+        printf("%sInvalid date!%s\n", RED, RESET);
+        pause_prompt();
+        return 0;
+    }
+
+    FILE *f = fopen(EXP_FILE, "r");
+    if (!f) { printf("%sNo expenses found.%s\n", RED, RESET); pause_prompt(); return 0; }
+
+    Expense e;
+    int found = 0;
+    printf("\n%sExpenses on %02d-%02d-%04d:%s\n", BLUE, d, m, y, RESET);
+    printf("---------------------------------------------\n");
+    while (fscanf(f, "%d %31s %d %d %d %31s %lf",
+                  &e.id, e.username, &e.day, &e.month, &e.year, e.category, &e.amount) == 7) {
+        if (strcmp(e.username, username) == 0 && e.day == d && e.month == m && e.year == y) {
+            printf("ID:%02d | %s | %.2f\n", e.id, e.category, e.amount);
+            found = 1;
+        }
+    }
+    fclose(f);
+
+    if (!found) printf("%sNo records found for that date.%s\n", RED, RESET);
+    pause_prompt();
+    return found;
+}
+
+int edit_expense(const char *username) {
+    int id;
+    clear_screen();
+    print_header("Edit Expense");
+    printf("Enter Expense ID to edit: ");
+    if (scanf("%d", &id) != 1) { while (getchar() != '\n'); printf("%sInvalid ID!%s\n", RED, RESET); pause_prompt(); return 0; }
+    while (getchar() != '\n');
+    FILE *f = fopen(EXP_FILE, "r");
+    if (!f) { printf("%sNo expenses file.%s\n", RED, RESET); pause_prompt(); return 0; }
+    FILE *tmp = fopen("tmp.dat", "w");
+    if (!tmp) { fclose(f); perror("Cannot open temp file"); pause_prompt(); return 0; }
+    Expense e;
+    int found = 0;
+    while (fscanf(f, "%d %31s %d %d %d %31s %lf",
+                  &e.id, e.username, &e.day, &e.month, &e.year, e.category, &e.amount) == 7) {
+        if (e.id == id && strcmp(e.username, username) == 0) {
+            found = 1;
+            printf("Found: %02d-%02d-%04d | %s | %.2f\n", e.day, e.month, e.year, e.category, e.amount);
+            if (!confirm_prompt("Edit this record?")) {
+                fprintf(tmp, "%d %s %d %d %d %s %.2f\n",
+                        e.id, e.username, e.day, e.month, e.year, e.category, e.amount);
+                continue;
+            }
+
+            char buf[64];
+            printf("New date (dd-mm-yyyy): ");
+            if (fgets(buf, sizeof(buf), stdin)) {
+                trim_newline(buf);
+                if (strlen(buf) > 0) parse_date(buf, &e.day, &e.month, &e.year);
+            }
+
+            printf("New category: ");
+            if (fgets(buf, sizeof(buf), stdin)) {
+                trim_newline(buf);
+                if (strlen(buf) > 0) strncpy(e.category, buf, MAXCAT);
+            }
+
+            printf("New amount: ");
+            double a;
+            if (scanf("%lf", &a) == 1 && a > 0) e.amount = a;
+            while (getchar() != '\n');
+            printf("%sExpense updated successfully.%s\n", GREEN, RESET);
+        }
+        fprintf(tmp, "%d %s %d %d %d %s %.2f\n", e.id, e.username, e.day, e.month, e.year, e.category, e.amount);
+    }
+
+    fclose(f);
+    fclose(tmp);
+    remove(EXP_FILE);
+    rename("tmp.dat", EXP_FILE);
+    if (!found) printf("%sRecord not found.%s\n", RED, RESET);
+    pause_prompt();
+    return found;
+}
+
+int delete_expense(const char *username) {
+    int id;
+    clear_screen();
+    print_header("Delete Expense");
+    printf("Enter Expense ID to delete: ");
+    if (scanf("%d", &id) != 1) { while (getchar() != '\n'); printf("%sInvalid ID!%s\n", RED, RESET); pause_prompt(); return 0; }
+    while (getchar() != '\n');
+    FILE *f = fopen(EXP_FILE, "r");
+    if (!f) { printf("%sNo expenses file.%s\n", RED, RESET); pause_prompt(); return 0; }
+    FILE *tmp = fopen("tmp.dat", "w");
+    if (!tmp) { fclose(f); perror("Cannot open temp file"); pause_prompt(); return 0; }
+    Expense e;
+    int found = 0;
+    while (fscanf(f, "%d %31s %d %d %d %31s %lf",
+                  &e.id, e.username, &e.day, &e.month, &e.year, e.category, &e.amount) == 7) {
+        if (e.id == id && strcmp(e.username, username) == 0) {
+            found = 1;
+            if (!confirm_prompt("Are you sure about deleting this expense?")) {
+                fprintf(tmp, "%d %s %d %d %d %s %.2f\n",
+                        e.id, e.username, e.day, e.month, e.year, e.category, e.amount);
+                continue;
+            }
+            printf("%sDeleted successfully.%s\n", GREEN, RESET);
+            continue;
+        }
+        fprintf(tmp, "%d %s %d %d %d %s %.2f\n", e.id, e.username, e.day, e.month, e.year, e.category, e.amount);
+    }
+
+    fclose(f);
+    fclose(tmp);
+    remove(EXP_FILE);
+    rename("tmp.dat", EXP_FILE);
+    if (!found) printf("%sRecord not found.%s\n", RED, RESET);
+    pause_prompt();
+    return found;
+}
+int monthly_summary(const char *username) {
+    int month, year;
+    char buf[64];
+    clear_screen();
+    print_header("Monthly Summary");
+    printf("Enter month and year (mm-yyyy): ");
+    if (!fgets(buf, sizeof(buf), stdin)) { printf("%sInvalid input!%s\n", RED, RESET); pause_prompt(); return 0; }
+    trim_newline(buf);
+
+    if (!parse_month_year(buf, &month, &year)) {
+        printf("%sInvalid input format! Use mm-yyyy or mm/yyyy.%s\n", RED, RESET);
+        pause_prompt();
+        return 0;
+    }
+    if (month < 1 || month > 12) {
+        printf("%sInvalid month! Must be 1-12.%s\n", RED, RESET);
+        pause_prompt();
+        return 0;
+    }
+
+    time_t t = time(NULL);
+    struct tm *now = localtime(&t);
+    if (year > (now->tm_year + 1900)) {
+        printf("%sInvalid year! Future year not allowed.%s\n", RED, RESET);
+        pause_prompt();
+        return 0;
+    }
+
+    FILE *f = fopen(EXP_FILE, "r");
+    if (!f) { printf("%sNo expenses file.%s\n", RED, RESET); pause_prompt(); return 0; }
+
+    Expense e;
+    double total = 0;
+    int count = 0;
+    printf("%s\nExpenses for %02d/%04d:%s\n", BLUE, month, year, RESET);
+    printf("---------------------------------------------\n");
+    while (fscanf(f, "%d %31s %d %d %d %31s %lf",
+                  &e.id, e.username, &e.day, &e.month, &e.year, e.category, &e.amount) == 7) {
+        if (strcmp(e.username, username) == 0 && e.month == month && e.year == year) {
+            printf("%02d-%02d-%04d | %s | %.2f\n", e.day, e.month, e.year, e.category, e.amount);
+            total += e.amount;
+            count++;
+        }
+    }
+    fclose(f);
+    printf("---------------------------------------------\nTotal: %.2f | Count: %d\n", total, count);
+    pause_prompt();
+    return 1;
+}
+
+int yearly_summary(const char *username) {
+    int year;
+    char buf[64];
+
+    clear_screen();
+    print_header("Yearly Summary");
+
+    printf("Enter year (yyyy): ");
+    if (!fgets(buf, sizeof(buf), stdin)) { printf("%sInvalid input!%s\n", RED, RESET); pause_prompt(); return 0; }
+    trim_newline(buf);
+
+    if (sscanf(buf, "%d", &year) != 1) {
+        printf("%sInvalid input format!%s\n", RED, RESET);
+        pause_prompt();
+        return 0;
+    }
+
+    time_t t = time(NULL);
+    struct tm *now = localtime(&t);
+    if (year > (now->tm_year + 1900)) {
+        printf("%sInvalid year! Future year not allowed.%s\n", RED, RESET);
+        pause_prompt();
+        return 0;
+    }
+
+    FILE *f = fopen(EXP_FILE, "r");
+    if (!f) { printf("%sNo expenses file.%s\n", RED, RESET); pause_prompt(); return 0; }
+    Expense e;
+    double total = 0;
+    int count = 0;
+    printf("%s\nExpenses for year %04d:%s\n", BLUE, year, RESET);
+    printf("---------------------------------------------\n");
+    while (fscanf(f, "%d %31s %d %d %d %31s %lf",
+                  &e.id, e.username, &e.day, &e.month, &e.year, e.category, &e.amount) == 7) {
+        if (strcmp(e.username, username) == 0 && e.year == year) {
+            printf("%02d-%02d-%04d | %s | %.2f\n", e.day, e.month, e.year, e.category, e.amount);
+            total += e.amount;
+            count++;
+        }
+    }
+    fclose(f);
+    printf("---------------------------------------------\nTotal: %.2f | Count: %d\n", total, count);
+    pause_prompt();
+    return 1;
+}
+
+int main(void) {
+    init_current_id();
+    int choice;
+    char username[MAXUSER] = "";
+
+    while (1) {
+        clear_screen();
+        print_header("Basic Expense Tracker");
+
+        printf("%s1.%s %sRegister%s\n", CYAN, RESET, BOLD YELLOW, RESET);
+        printf("%s2.%s %sLogin%s\n", CYAN, RESET, BOLD YELLOW, RESET);
+        printf("%s3.%s %sExit%s\n\n", CYAN, RESET, BOLD YELLOW, RESET);
+        printf("%sChoose:%s ", YELLOW, RESET);
+
+        if (scanf("%d", &choice) != 1) { while (getchar() != '\n'); continue; }
+        while (getchar() != '\n');
+
+        if (choice == 1) {
+            register_user();
+        } else if (choice == 2) {
+            if (login_user(username)) {
+                int opt = 0;
+                while (opt != 9) {
+                    clear_screen();
+                    print_header("Main Menu");
+                    printf("Logged in as: %s%s%s\n\n", GREEN, username, RESET);
+                    printf("%s1.%s %sAdd Expense%s\n", CYAN, RESET, BOLD YELLOW, RESET);
+                    printf("%s2.%s %sView Expenses %s\n", CYAN, RESET, BOLD YELLOW, RESET);
+                    printf("%s3.%s %sEdit Expense%s\n", CYAN, RESET, BOLD YELLOW, RESET);
+                    printf("%s4.%s %sDelete Expense%s\n", CYAN, RESET, BOLD YELLOW, RESET);
+                    printf("%s5.%s %sMonthly Summary%s\n", CYAN, RESET, BOLD YELLOW, RESET);
+                    printf("%s6.%s %sYearly Summary%s\n", CYAN, RESET, BOLD YELLOW, RESET);
+                    printf("%s7.%s %sLogout%s\n", CYAN, RESET, BOLD YELLOW, RESET);
+                    printf("%s8.%s %sExit%s\n", CYAN, RESET, BOLD YELLOW, RESET);
+                    printf("\n%sChoose:%s ", YELLOW, RESET);
+
+                    if (scanf("%d", &opt) != 1) { while (getchar() != '\n'); opt = 0; }
+                    while (getchar() != '\n');
+
+                    switch (opt) {
+                        case 1: add_expense(username); break;
+                        case 2: view_expenses_by_date(username); break;
+                        case 3: edit_expense(username); break;
+                        case 4: delete_expense(username); break;
+                        case 5: monthly_summary(username); break;
+                        case 6: yearly_summary(username); break;
+                        case 7: opt = 9; break; // logout
+                        case 8: printf("%s Exiting Goodbye!%s\n", CYAN, RESET); exit(0);
+                        default: printf("%sInvalid option.%s\n", RED, RESET); pause_prompt();
+                    }
+                }
+            }
+        } else if (choice == 3) {
+            printf("%sGoodbye!%s\n", CYAN, RESET);
+            break;
+        } else {
+            printf("%sInvalid choice.%s\n", RED, RESET);
+            pause_prompt();
+        }
+    }
+    return 0;
+}
